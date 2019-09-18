@@ -1,0 +1,245 @@
+---
+title: "Lyrics Analysis"
+author: "Samir Hadzic"
+date: "September 18, 2019"
+output:
+  html_document:
+    df_print: paged
+---
+##An Analysis of Song Lyric Complexity##
+
+A common critique of modern songs is that they are overly-simple (in both textual and conceptual content) and far too repetitive. This critique is most often advanced in conjunction with claims about the changing mentalities of newer generations. To test this critique, this investigation will explore several different aspects of lyrical complexity in the lyrics database scraped from MetroLyrics. To begin, we will not only be using stem words, but also the raw lyrics themselves (after removing all brackets and text within, abbreviation, punctuation, whitespace, etc...). This is necessary as most of the repetition in lyrics will come from the raw lyrics themselves as opposed to the already pruned stem words. 
+
+The analysis will analyze at trends in lyric complexity over time, genre, artist popularity, and more.  
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r, echo = FALSE, message=FALSE, warning=FALSE}
+# load packages
+library(tidyverse)
+library(tidytext)
+library(ggplot2)
+library(plotly)
+library(plyr)
+library(dplyr)
+library(tm)
+library(wordcloud2)
+library(qdap)
+library(DT)
+library(CGPfunctions)
+
+# load lyrics data
+load('../output/processed_lyrics.RData') 
+
+```
+
+```{r, echo = FALSE}
+# cleaning raw lyrics data to analyze repetition and complexity
+
+clean_lyrics <- function(x) {
+  x <- bracketX(x)
+  x <- replace_abbreviation(x)
+  x <- replace_symbol(x)
+  x <- removePunctuation(x)
+  x <- removeWords(x, character(0))
+  x <- replace_number(x)
+  x <- stripWhitespace(x)
+  x <- str_trim(x, side = "both")
+  x <- tolower(x)      
+  return(x)
+}
+
+dt_lyrics$cleaned_lyrics <- sapply(X = dt_lyrics$lyrics, FUN = clean_lyrics)
+dt_lyrics$genre <- as.factor(ifelse(dt_lyrics$genre == 'Not Available', 'Other', dt_lyrics$genre))
+
+```
+
+```{r, echo = FALSE}
+word_count <- function(x) {
+  return(length(unlist(strsplit(x, split = ' '))))
+}
+
+unique_words <- function(x) {
+  words <- unlist(strsplit(x, split = ' '))
+  unique_words <- length(unique(words))
+  pct_unique <- unique_words / length(words)
+  return(pct_unique)
+}
+
+word_length <- function(x) {
+  words <- unlist(strsplit(x, split = ' '))
+  avg_word_length <- mean(sapply(X = words, nchar), na.rm = T)
+  return(avg_word_length)
+}
+
+dt_lyrics$word_count <- sapply(X = dt_lyrics$cleaned_lyrics, FUN = word_count)
+dt_lyrics$stemmedword_count <- sapply(X = dt_lyrics$stemmedwords, FUN = word_count)
+dt_lyrics$pct_unique <- sapply(X = dt_lyrics$cleaned_lyrics, FUN = unique_words)
+dt_lyrics$pct_unique_stemmedword <- sapply(X = dt_lyrics$stemmedwords, FUN = unique_words)
+dt_lyrics$avg_word_length <- sapply(X = dt_lyrics$cleaned_lyrics, FUN = word_length)
+dt_lyrics$avg_stemmedword_length <- sapply(X = dt_lyrics$stemmedwords, FUN = word_length)
+
+aggregate_stats <- function(df, grouping) {
+  df$avg_word_count <- mean(df$word_count)
+  df$avg_stemmedword_count <- mean(df$stemmedword_count)
+  df$avg_pct_unique <- mean(df$pct_unique)
+  df$avg_pct_unique_stemmedword <- mean(df$pct_unique_stemmedword)
+  df$avg_word_length <- mean(df$avg_word_length)
+  df$avg_stemmedword_length <- mean(df$avg_stemmedword_length)
+  df$number_of_songs <- nrow(df)
+  new_df <- df[, c(grouping, 'avg_word_count', 'avg_stemmedword_count', 'avg_pct_unique', 'avg_pct_unique_stemmedword', 
+                   'avg_word_length', 'avg_stemmedword_length', 'number_of_songs')]
+  new_df <- new_df[!duplicated(new_df),]
+  return(new_df)
+}
+
+```
+
+```{r, echo = FALSE}
+genre_time <- ddply(.data = dt_lyrics, .variables = .(genre, year), .fun = aggregate_stats, grouping = c('genre', 'year'))
+genre_time <- genre_time[genre_time$number_of_songs >= 100,]
+
+# Folk and R&B excluded due to lack of observations
+genre_time <- genre_time[!genre_time$genre %in% c('Folk', 'R&B'),]
+
+```
+
+
+##Lyrical Complexity by Time and Genre##
+
+Our first metric for lyrical complexity is as follows. From each song, the count of unique words from the cleaned lyrics is taken. Then, to standardize for difference in song lengths, the number of unique words is divided by the total words in the song to arrive at a percent unique lyrics value. This process is repeated for stem words. The dataset is then subset by time and genre, and the average percent unique lyrics (as well as stem words) is taken across these factors. Due to imbalance in the dataset, the results are confined to years past which each genre has over 100 songs recorded. Folk and R&B are excluded from this time series analysis due to lack of data.
+
+As we can see from both of the graphs below, the percent unique words and stem words has been on the decline for most genres observed, although Jazz has remained relatively stable. 
+
+Note: Double click on a genre in the legend to isolate its graph.
+
+```{r, echo = FALSE}
+plot_unique_words <- ggplot(data = genre_time[genre_time$year >= 2000,], aes(x = year, y = avg_pct_unique * 100)) +
+  geom_point(mapping = aes(color = genre)) +
+  geom_line(mapping = aes(color = genre)) +
+  scale_color_brewer(name = 'Genre', palette = "Spectral") +
+  scale_x_continuous(breaks = scales::pretty_breaks(n = 10)) +
+  labs(x = 'Year', y = '[%] Unique Words', title = 'Average Unique Words Percentage Over Time') +
+  theme_dark()
+
+ggplotly(plot_unique_words)
+
+```
+
+```{r, echo = FALSE}
+plot_unique_stemmedwords <- ggplot(data = genre_time[genre_time$year >= 2000,], aes(x = year, y = avg_pct_unique_stemmedword * 100)) +
+  geom_point(mapping = aes(color = genre)) +
+  geom_line(mapping = aes(color = genre)) +
+  scale_color_brewer(name = 'Genre', palette = "Spectral") + 
+  scale_x_continuous(breaks = scales::pretty_breaks(n = 10)) +
+  labs(x = 'Year', y = '[%] Unique Stem Words', title = 'Average Unique Stem Words Percentage Over Time') +
+  theme_dark()
+
+ggplotly(plot_unique_stemmedwords)
+```
+
+We can use the below slope graph to take a closer look at the drop each genre takes from data starting point to present day. The difference in population means from starting to present is statistically significant at 95% confidence levels for all genres but jazz. 
+
+```{r, echo = FALSE, warning=FALSE, message = FALSE}
+
+prep <- data.frame(genre = rep(unique(genre_time$genre), 2), 
+                   time = c(rep('Data Start', length(unique(genre_time$genre))), rep('Present', length(unique(genre_time$genre)))), 
+                   avg_percent_unique = NA)
+for (i in unique(prep$genre)) {
+  prep$avg_percent_unique[prep$time == 'Data Start' & prep$genre == i] <- round(genre_time$avg_pct_unique[genre_time$genre == i & 
+                                                                              genre_time$year == min(genre_time$year[genre_time$genre == i])], 2)
+  prep$avg_percent_unique[prep$time == 'Present' & prep$genre == i] <- round(genre_time$avg_pct_unique[genre_time$genre == i & 
+                                                                              genre_time$year == max(genre_time$year[genre_time$genre == i])], 2)
+}
+
+# for (i in unique(prep$genre)) {
+#   print(i)
+#   print(t.test(dt_lyrics$pct_unique[dt_lyrics$year == min(genre_time$year[genre_time$genre == i]) & dt_lyrics$genre == i], 
+#                dt_lyrics$pct_unique[dt_lyrics$year == max(genre_time$year[genre_time$genre == i]) & dt_lyrics$genre == i]))
+# }
+
+colnames(prep) <- c('genre', 'time', 'Avg Percent Unique')
+
+newggslopegraph(dataframe = prep, 
+                Times = time, 
+                Measurement = `Avg Percent Unique`, 
+                Grouping = genre, 
+                Title = "Song Complexity from Data Start to Present",
+                SubTitle = "",
+                Caption = "Differences from emergence to present are statistically signficant at the 95% confidence level for all genres except for jazz.", XTextSize = 12, YTextSize = 3)
+
+```
+
+```{r, echo = FALSE}
+genre_artist <- ddply(.data = dt_lyrics, .variables = .(genre, artist), .fun = aggregate_stats, grouping = c('genre', 'artist'))
+segmenting_artists <- function(df) {
+  df$`Top Artist` <- 'Sub 99th Percentile'
+  df$`Top Artist` <- ifelse(df$number_of_songs >= quantile(df$number_of_songs, 0.99), '99th Percentile', df$`Top Artist`)
+  return(df)
+}
+genre_artist <- ddply(.data = genre_artist, .variables = .(genre), .fun = segmenting_artists)
+
+```
+
+From here, the data is subset by both genre and artist, and various aggregate statistics are compiled. Notably, the artists within each genre that are in the 99th percentile for number of songs in the database are marked as 'top artists'. An artists number of songs in this database is in this manner used as a metric for popularity. We then looked at the percent of unique words typically used in songs made by top artists in a genre vs the rest. Although it was hypothesized more popular artists would have simpler lyrical complexity, ultimately there was no significant difference accross groups, save for Folk and Metal. 
+
+```{r, echo = FALSE}
+by_artist_caliber <- ggplot(genre_artist) + 
+  geom_bar(aes(genre, avg_pct_unique, fill = `Top Artist`), 
+           position = "dodge", stat = "summary", fun.y = "mean") +
+  labs(x = 'Genre', y = '[%] Unique Words', title = 'Unique Words Percentage by Artist Popularity') +
+  scale_color_brewer(name = 'Artist Popularity') +
+  theme(axis.text.x = element_text(angle = 45))
+
+ggplotly(by_artist_caliber)
+```
+
+Another metric accessed was average word length (in characters) for a given song. This was meant to be a metric for lyrical complexity, with longer average word lengths suggesting higher level text. However, there was almost no difference in average word length accross genres.
+
+```{r, echo = FALSE}
+length_by_genre <- ggplot(dt_lyrics) + 
+  geom_bar(aes(genre, avg_word_length, fill = 'red'), 
+           position = "dodge", stat = "summary", fun.y = "mean") +
+  labs(x = 'Genre', y = 'Characters', title = 'Average Word Length by Genre') +
+  theme(axis.text.x = element_text(angle = 45), legend.position = "none")
+ggplotly(length_by_genre)
+
+```
+
+Lastly, average word and stem word count were tracked accross time and genre. Interestingly, most genres remained constant over time except for Hip-Hop, which lost roughly 40 words on average per song. As Hip-Hop has constinously grown mainstream over the past decade, this decline perhaps makes sense as the genre becomes more accessible to the masses. Notably, the average word count in a Hip-Hop song is still well above other genres.  
+
+```{r, echo = FALSE}
+plot_avg_stemmedword_count <- ggplot(data = genre_time[genre_time$year >= 2000,], aes(x = year, y = avg_stemmedword_count)) +
+  geom_point(mapping = aes(color = genre)) +
+  geom_line(mapping = aes(color = genre)) +
+  scale_color_brewer(name = 'Genre', palette = "Spectral") + 
+  scale_x_continuous(breaks = scales::pretty_breaks(n = 10)) +
+  labs(x = 'Year', y = 'Stem Word Count', title = 'Average Stem Word Count Over Time') +
+  theme_dark()
+
+ggplotly(plot_avg_stemmedword_count)
+
+```
+
+Since Hip-Hop was one of the genres that most declined in complexity (via both unique word and stem word percentages, and average word counts), let us take a further look. We previously posited that perhaps the genre's rising degree of mainstream popularity is behind the changes, but maybe the content can shed insight as well. Below is a word cloud of the most popular words in Hip-Hop in the year 2002, and below that is the same figure for 2016.
+
+```{r, echo = FALSE}
+wc_prep_onset <- strsplit(unlist(dt_lyrics$stemmedwords[dt_lyrics$genre == 'Hip-Hop' & 
+                                                            dt_lyrics$year == min(genre_time$year[genre_time$genre == 'Hip-Hop'])]), ' ')
+wc_prep_end <- strsplit(unlist(dt_lyrics$stemmedwords[dt_lyrics$genre == 'Hip-Hop' & 
+                                                            dt_lyrics$year == max(genre_time$year[genre_time$genre == 'Hip-Hop'])]), ' ')
+
+wc_onset_freq <- freq_terms(wc_prep_onset, 200)
+wc_end_freq <- freq_terms(wc_prep_end, 200)
+wordcloud2(data = wc_onset_freq, color = 'random-dark', backgroundColor = 'white', minRotation = pi/6, maxRotation = pi/6, rotateRatio = 1) 
+```
+
+We can see a marked increase in profanity and words with violent contonations going from 2002 to 2016. Notably the once prominent "girl" is replaced by the corresponding deragotory term. There are also far more references to money and luxury items now than there were in the past. Hip-Hop's previously discerned shift in lyrical and textual complexity over the past two decades might then be driven by this corresponding change in lyrical content.
+```{r, echo = FALSE}
+wordcloud2(data = wc_end_freq, color = 'random-light', backgroundColor = 'black', minRotation = -pi/6, maxRotation = -pi/6, rotateRatio = 1)  
+
+```
+
+In general, the analysis has shown that there has been a discernible trend towards less complex song lyrics. A limitation of this analysis is that primarily lyrics from songs made past 2000 were used (in the time series analysis). A larger data set would be helpful for more conclusive claims. Additionally, using percent unique word count can be improved with perhaps an algorithmic approach to find repeated phrases as opposed to words. 
